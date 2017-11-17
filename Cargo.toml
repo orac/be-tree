@@ -1,0 +1,6 @@
+[package]
+name = "be-tree"
+version = "0.1.0"
+authors = ["Dan Hulme <dan@five.ai>"]
+
+[dependencies]
