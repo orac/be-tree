@@ -1,3 +1,5 @@
+use std::fmt;
+
 const max_values_per_leaf: usize = 4;
 
 struct Pivot<K, V> {
@@ -77,14 +79,14 @@ impl<K, V> Node<K, V> where K: Copy + Ord {
         }
     }
 
-    fn query(&self, key: K) -> Option<&V> {
+    fn get(&self, key: K) -> Option<&V> {
         match *self {
             Node::Branch { ref pivots } => {
                 // Find a child node whose keys are not before the target key
                 match pivots.iter().find(|ref p| key <= p.min_key) {
                     Some(ref pivot) => {
                         // If there is one, query it
-                        pivot.child.query(key)
+                        pivot.child.get(key)
                     },
                     // o/w, the key doesn't exist
                     None => None
@@ -102,25 +104,44 @@ impl<K, V> Node<K, V> where K: Copy + Ord {
     }
 }
 
+/// A map based on a B𝛆-tree
 pub struct BeTree< K, V > {
     root: Node< K, V >
 }
 
 impl<K, V> BeTree<K, V> where K: Copy + Ord {
+    /// Create an empty B𝛆-tree.
     pub fn new() -> Self { BeTree { root: Node::Leaf { elements: Vec::new() } } }
+
+    /// Clear the tree, removing all entries.
+    pub fn clear(&mut self) {
+        match self.root {
+            Node::Leaf { elements: ref mut l } => l.clear(),
+            _ => { self.root = Node::Leaf { elements: Vec::new() } }
+        }
+    }
+
+    /// Insert a key-value pair into the tree.
+    ///
+    /// If the key is already present in the tree, the value is replaced. The key is not updated, though; this matters for
+    /// types that can be `==` without being identical.
     pub fn insert(&mut self, key: K, value: V)
     {
         self.root.insert(key, value)
     }
 
+    /// Remove a key (and its value) from the tree.
+    ///
+    /// If the key is not present, silently does nothing.
     pub fn delete(&mut self, key: K)
     {
         self.root.delete(key)
     }
 
-    pub fn query(&self, key: K) -> Option<&V>
+    /// Retrieve a reference to the value corresponding to the key.
+    pub fn get(&self, key: K) -> Option<&V>
     {
-        self.root.query(key)
+        self.root.get(key)
     }
 }
 
@@ -137,7 +158,7 @@ mod tests {
     fn can_insert_single() {
         let mut b = BeTree::new();
         b.insert(0, 'x');
-        let result = b.query(0);
+        let result = b.get(0);
         assert_eq!(Some(&'x'), result);
     }
 
@@ -146,8 +167,17 @@ mod tests {
         let mut b = BeTree::new();
         b.insert(0, 'x');
         b.insert(-1, 'y');
-        assert_eq!(Some(&'x'), b.query(0));
-        assert_eq!(Some(&'y'), b.query(-1));
+        assert_eq!(Some(&'x'), b.get(0));
+        assert_eq!(Some(&'y'), b.get(-1));
+    }
+
+    #[test]
+    fn can_clear() {
+        let mut b = BeTree::new();
+        b.insert(0, 'x');
+        b.insert(-1, 'y');
+        b.clear();
+        assert_eq!(None, b.get(0));
     }
 
     #[test]
@@ -155,7 +185,7 @@ mod tests {
         let mut b = BeTree::new();
         b.insert(0, 'x');
         b.insert(0, 'y');
-        assert_eq!(Some(&'y'), b.query(0));
+        assert_eq!(Some(&'y'), b.get(0));
     }
 
     #[test]
@@ -163,7 +193,7 @@ mod tests {
         let mut b = BeTree::new();
         b.insert(0, 'x');
         b.delete(0);
-        assert_eq!(b.query(0), None)
+        assert_eq!(b.get(0), None)
     }
 
     #[test]
@@ -172,8 +202,8 @@ mod tests {
         b.insert(0, 'x');
         b.insert(2, 'y');
         b.delete(0);
-        assert_eq!(b.query(0), None);
-        assert_eq!(Some(&'y'), b.query(2));
+        assert_eq!(b.get(0), None);
+        assert_eq!(Some(&'y'), b.get(2));
     }
 
     #[test]
