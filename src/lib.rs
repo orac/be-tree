@@ -16,7 +16,7 @@ enum Node<K, V>
     }
 }
 
-impl<K, V> Node<K, V> where V: Copy, K: Copy + Ord {
+impl<K, V> Node<K, V> where K: Copy + Ord {
     fn min_key(&self) -> K {
         match *self {
             Node::Branch { pivots: ref p } => {
@@ -43,7 +43,7 @@ impl<K, V> Node<K, V> where V: Copy, K: Copy + Ord {
                 }
             }
             Node::Leaf { elements: ref mut l } => {
-                let index = l.binary_search_by_key(&key, |&x| x.0);
+                let index = l.binary_search_by_key(&key, |&(k, _)| k);
                 match index {
                     Err(i) => l.insert(i, (key, value)),
                     Ok(_) => ()
@@ -67,7 +67,7 @@ impl<K, V> Node<K, V> where V: Copy, K: Copy + Ord {
                 }
             }
             Node::Leaf { elements: ref mut l } if l.len() > 0 => {
-                let index = l.binary_search_by_key(&key, |&x| x.0);
+                let index = l.binary_search_by_key(&key, |&(k, _)| k);
                 match index {
                     Err(_) => (),
                     Ok(i) => { l.remove(i); }
@@ -77,7 +77,7 @@ impl<K, V> Node<K, V> where V: Copy, K: Copy + Ord {
         }
     }
 
-    fn query(&self, key: K) -> Option<V> {
+    fn query(&self, key: K) -> Option<&V> {
         match *self {
             Node::Branch { ref pivots } => {
                 // Find a child node whose keys are not before the target key
@@ -91,10 +91,10 @@ impl<K, V> Node<K, V> where V: Copy, K: Copy + Ord {
                 }
             }
             Node::Leaf { elements: ref l } if l.len() > 0 => {
-                let index = l.binary_search_by_key(&key, |&x| x.0);
+                let index = l.binary_search_by_key(&key, |&(k, _)| k);
                 match index {
                     Err(_) => None,
-                    Ok(i) => Some(l[i].1)
+                    Ok(i) => Some(&l[i].1)
                 }
             }
             _ => None
@@ -106,7 +106,7 @@ pub struct BeTree< K, V > {
     root: Node< K, V >
 }
 
-impl<K, V> BeTree<K, V> where V: Copy, K: Copy + Ord {
+impl<K, V> BeTree<K, V> where K: Copy + Ord {
     pub fn new() -> Self { BeTree { root: Node::Leaf { elements: Vec::new() } } }
     pub fn insert(&mut self, key: K, value: V)
     {
@@ -118,7 +118,7 @@ impl<K, V> BeTree<K, V> where V: Copy, K: Copy + Ord {
         self.root.delete(key)
     }
 
-    pub fn query(&self, key: K) -> Option<V>
+    pub fn query(&self, key: K) -> Option<&V>
     {
         self.root.query(key)
     }
@@ -138,7 +138,7 @@ mod tests {
         let mut b = BeTree::new();
         b.insert(0, 'x');
         let result = b.query(0);
-        assert_eq!(Some('x'), result);
+        assert_eq!(Some(&'x'), result);
     }
 
     #[test]
@@ -146,8 +146,8 @@ mod tests {
         let mut b = BeTree::new();
         b.insert(0, 'x');
         b.insert(-1, 'y');
-        assert_eq!(Some('x'), b.query(0));
-        assert_eq!(Some('y'), b.query(-1));
+        assert_eq!(Some(&'x'), b.query(0));
+        assert_eq!(Some(&'y'), b.query(-1));
     }
 
     #[test]
@@ -165,7 +165,7 @@ mod tests {
         b.insert(2, 'y');
         b.delete(0);
         assert_eq!(b.query(0), None);
-        assert_eq!(Some('y'), b.query(2));
+        assert_eq!(Some(&'y'), b.query(2));
     }
 
     #[test]
