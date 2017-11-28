@@ -46,7 +46,7 @@ impl<K, V> Node<K, V> where K: Copy + Ord {
                 let index = l.binary_search_by_key(&key, |&(k, _)| k);
                 match index {
                     Err(i) => l.insert(i, (key, value)),
-                    Ok(_) => ()
+                    Ok(i) => l[i] = (key, value)
                 }
             }
         }
@@ -148,6 +148,14 @@ mod tests {
         b.insert(-1, 'y');
         assert_eq!(Some(&'x'), b.query(0));
         assert_eq!(Some(&'y'), b.query(-1));
+    }
+
+    #[test]
+    fn insert_replaces_existing() {
+        let mut b = BeTree::new();
+        b.insert(0, 'x');
+        b.insert(0, 'y');
+        assert_eq!(Some(&'y'), b.query(0));
     }
 
     #[test]
