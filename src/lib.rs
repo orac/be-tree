@@ -7,30 +7,48 @@ struct Pivot<K, V> {
     child: Node<K, V>
 }
 
+struct LeafNode<K, V> {
+    elements: Vec<(K, V)>,
+    // must be <= max_values_per_leaf
+    len: usize,
+}
+
+impl<K, V> LeafNode<K, V> where K: Copy, V: Clone {
+    fn empty() -> Self {
+        Self { elements: vec![], len: 0 }
+    }
+
+    fn from(items: &[(K, V)]) -> Self {
+        Self {
+            elements: Vec::from(items),
+            len: items.len()
+        }
+    }
+}
+
 enum Node<K, V>
 {
     Branch {
         // each pair is a key and the node of stuff greater than or equal to that key; i.e. the first key is the minimum key of the vector
-        pivots: Vec<Pivot<K, V>>
+        pivots: Vec<Pivot<K, V>>,
     },
-    Leaf {
-        elements: Vec<(K, V)>
-    }
+    Leaf(LeafNode<K, V>)
 }
 
-impl<K, V> Node<K, V> where K: Copy + Ord {
+impl<K, V> Node<K, V> where K: Copy + Ord, V: Clone {
     fn min_key(&self) -> K {
         match *self {
             Node::Branch { pivots: ref p } => {
                 p[0].min_key
             },
-            Node::Leaf { elements: ref e } => {
-                e[0].0
+            Node::Leaf(ref leaf) => {
+                leaf.elements[0].0
             }
         }
     }
+
     fn insert(&mut self, key: K, value: V) {
-        match *self {
+        let replace_node: Option<Self> = match *self {
             Node::Branch { ref mut pivots } => {
                 // Find a child node whose keys are not before the target key
                 match pivots.iter().position(|ref p| key <= p.min_key) {
@@ -41,16 +59,45 @@ impl<K, V> Node<K, V> where K: Copy + Ord {
                         pivot.child.insert(key, value)
                     },
                     // o/w, insert a new leaf at the end
-                    None => pivots.push(Pivot {min_key: key, child: Node::Leaf {elements: vec!((key, value))}})
-                }
+                    None => pivots.push(Pivot {min_key: key, child: Node::Leaf(LeafNode::empty())})
+                };
+                None
             }
-            Node::Leaf { elements: ref mut l } => {
-                let index = l.binary_search_by_key(&key, |&(k, _)| k);
+            Node::Leaf(ref mut leaf) => {
+                let index = leaf.elements.binary_search_by_key(&key, |&(k, _)| k);
                 match index {
-                    Err(i) => l.insert(i, (key, value)),
-                    Ok(i) => l[i] = (key, value)
+                    Err(i) => { // key is absent, true insert
+                        if leaf.len < max_values_per_leaf {
+                            // there's space left, just insert
+                            leaf.elements.insert(i, (key, value));
+                            leaf.len += 1;
+                            None
+                        } else {
+                            // must split the node: create the new node here
+                            let new_branch = {
+                                let (left, right) = leaf.elements.split_at(max_values_per_leaf / 2);
+                                let left_leaf = Node::Leaf(LeafNode::from(left));
+                                let right_leaf = Node::Leaf(LeafNode::from(right));
+                                Node::Branch {
+                                    pivots: vec![
+                                        Pivot { min_key: left_leaf.min_key(), child: left_leaf },
+                                        Pivot { min_key: right_leaf.min_key(), child: right_leaf }
+                                    ]
+                                }
+                            };
+                            Some(new_branch)
+                        }
+                    },
+                    // key is present, replace
+                    Ok(i) => {
+                        leaf.elements[i] = (key, value);
+                        None
+                    }
                 }
             }
+        };
+        if let Some(new_branch) = replace_node {
+            *self = new_branch
         }
     }
 
@@ -68,11 +115,11 @@ impl<K, V> Node<K, V> where K: Copy + Ord {
                     None => ()
                 }
             }
-            Node::Leaf { elements: ref mut l } if l.len() > 0 => {
-                let index = l.binary_search_by_key(&key, |&(k, _)| k);
+            Node::Leaf(ref mut leaf) if leaf.len > 0 => {
+                let index = leaf.elements.binary_search_by_key(&key, |&(k, _)| k);
                 match index {
                     Err(_) => (),
-                    Ok(i) => { l.remove(i); }
+                    Ok(i) => { leaf.elements.remove(i); }
                 }
             }
             _ => ()
@@ -92,11 +139,11 @@ impl<K, V> Node<K, V> where K: Copy + Ord {
                     None => None
                 }
             }
-            Node::Leaf { elements: ref l } if l.len() > 0 => {
-                let index = l.binary_search_by_key(&key, |&(k, _)| k);
+            Node::Leaf(ref leaf) if leaf.len > 0 => {
+                let index = leaf.elements.binary_search_by_key(&key, |&(k, _)| k);
                 match index {
                     Err(_) => None,
-                    Ok(i) => Some(&l[i].1)
+                    Ok(i) => Some(&leaf.elements[i].1)
                 }
             }
             _ => None
@@ -109,15 +156,18 @@ pub struct BeTree< K, V > {
     root: Node< K, V >
 }
 
-impl<K, V> BeTree<K, V> where K: Copy + Ord {
+impl<K, V> BeTree<K, V> where K: Copy + Ord, V: Clone {
     /// Create an empty B𝛆-tree.
-    pub fn new() -> Self { BeTree { root: Node::Leaf { elements: Vec::new() } } }
+    pub fn new() -> Self { BeTree { root: Node::Leaf(LeafNode::empty()) } }
 
     /// Clear the tree, removing all entries.
     pub fn clear(&mut self) {
         match self.root {
-            Node::Leaf { elements: ref mut l } => l.clear(),
-            _ => { self.root = Node::Leaf { elements: Vec::new() } }
+            Node::Leaf(ref mut leaf) => {
+                leaf.elements.clear();
+                leaf.len = 0
+            },
+            _ => { self.root = Node::Leaf(LeafNode::empty()) }
         }
     }
 
@@ -169,6 +219,19 @@ mod tests {
         b.insert(-1, 'y');
         assert_eq!(Some(&'x'), b.get(0));
         assert_eq!(Some(&'y'), b.get(-1));
+    }
+
+    #[test]
+    fn can_split() {
+        let mut b = BeTree::new();
+        // insert max_values_per_leaf + 1 items
+        for i in 0..::max_values_per_leaf {
+            b.insert(i, i);
+        }
+        // are they all there?
+        for i in 0..::max_values_per_leaf {
+            assert_eq!(Some(&i), b.get(i));
+        }
     }
 
     #[test]
