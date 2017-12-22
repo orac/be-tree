@@ -38,19 +38,42 @@ impl<K, V> LeafNode<K, V> where K: Copy, V: Clone {
     }
 }
 
+struct BranchNode<K, V> {
+    pivots: [Pivot<K, V>; max_values_per_leaf],
+    // must be <= max_values_per_leaf and > 1
+    len: usize,
+}
+
+impl<K, V> BranchNode<K, V> where K: Copy {
+    fn from(left: Pivot<K, V>, right: Pivot<K, V>) -> Self {
+        unsafe {
+            let mut result = Self { pivots: mem::uninitialized(), len: 2 };
+            result.pivots[0] = left;
+            result.pivots[1] = right;
+            result
+        }
+    }
+    fn valid_pivots_mut(&mut self) -> &mut [Pivot<K, V>] {
+        &mut self.pivots[0..self.len]
+    }
+
+    fn valid_pivots(&self) -> &[Pivot<K, V>] {
+        &self.pivots[0..self.len]
+    }
+}
+
 enum Node<K, V>
 {
-    Branch {
-        pivots: Vec<Pivot<K, V>>,
-    },
+    Branch(BranchNode<K, V>),
     Leaf(LeafNode<K, V>)
 }
 
 impl<K, V> Node<K, V> where K: Copy + Ord, V: Clone {
     fn min_key(&self) -> K {
         match *self {
-            Node::Branch { pivots: ref p } => {
-                p[0].min_key
+            Node::Branch(ref branch) => {
+                debug_assert!(branch.len > 1);
+                branch.pivots[0].min_key
             },
             Node::Leaf(ref leaf) => {
                 debug_assert_ne!(leaf.len, 0);
@@ -61,17 +84,21 @@ impl<K, V> Node<K, V> where K: Copy + Ord, V: Clone {
 
     fn insert(&mut self, key: K, value: V) {
         let replace_node: Option<Self> = match *self {
-            Node::Branch { ref mut pivots } => {
+            Node::Branch(ref mut branch) => {
                 // Find a child node whose keys are not before the target key
-                match pivots.iter().position(|ref p| key <= p.min_key) {
+                match branch.valid_pivots().iter().position(|ref p| key <= p.min_key) {
                     Some(i) => {
                         // If there is one, insert into it and update the pivot key
-                        let pivot = &mut pivots[i];
+                        let pivot = &mut branch.pivots[i];
                         pivot.min_key = key;
                         pivot.child.insert(key, value)
                     },
                     // o/w, insert a new leaf at the end
-                    None => pivots.push(Pivot {min_key: key, child: Box::new(Node::Leaf(LeafNode::empty()))})
+                    None => {
+                        branch.pivots[branch.len] = Pivot {min_key: key, child: Box::new(Node::Leaf(LeafNode::empty()))};
+                        branch.len += 1
+                        // XXX consider splitting branch
+                    }
                 };
                 None
             }
@@ -92,12 +119,10 @@ impl<K, V> Node<K, V> where K: Copy + Ord, V: Clone {
                                 let (left, right) = leaf.valid_elements_mut().split_at(max_values_per_leaf / 2);
                                 let left_leaf = Box::new(Node::Leaf(LeafNode::from(left)));
                                 let right_leaf = Box::new(Node::Leaf(LeafNode::from(right)));
-                                Node::Branch {
-                                    pivots: vec![
-                                        Pivot { min_key: left_leaf.min_key(), child: left_leaf },
-                                        Pivot { min_key: right_leaf.min_key(), child: right_leaf }
-                                    ]
-                                }
+                                Node::Branch(BranchNode::from(
+                                    Pivot { min_key: left_leaf.min_key(), child: left_leaf },
+                                    Pivot { min_key: right_leaf.min_key(), child: right_leaf }
+                                ))
                             };
                             Some(new_branch)
                         }
@@ -117,9 +142,9 @@ impl<K, V> Node<K, V> where K: Copy + Ord, V: Clone {
 
     fn delete(&mut self, key: K) {
         match *self {
-            Node::Branch { ref mut pivots } => {
+            Node::Branch(ref mut branch) => {
                 // Find a child node whose keys are not before the target key
-                match pivots.iter_mut().find(|ref p| key <= p.min_key) {
+                match branch.valid_pivots_mut().iter_mut().find(|ref p| key <= p.min_key) {
                     Some(ref mut pivot) => {
                         // If there is one, delete from it and update the pivot key
                         pivot.child.delete(key);
@@ -147,9 +172,9 @@ impl<K, V> Node<K, V> where K: Copy + Ord, V: Clone {
 
     fn get(&self, key: K) -> Option<&V> {
         match *self {
-            Node::Branch { ref pivots } => {
+            Node::Branch(ref branch) => {
                 // Find a child node whose keys are not before the target key
-                match pivots.iter().find(|ref p| key <= p.min_key) {
+                match branch.valid_pivots().iter().find(|ref p| key <= p.min_key) {
                     Some(ref pivot) => {
                         // If there is one, query it
                         pivot.child.get(key)
