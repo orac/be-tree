@@ -3,9 +3,10 @@ use std::mem;
 
 const max_values_per_leaf: usize = 4;
 
+/* A pivot is a key and a node of the subtree of values >= that key. */
 struct Pivot<K, V> {
     min_key: K,
-    child: Node<K, V>
+    child: Box<Node<K, V>>
 }
 
 struct LeafNode<K, V> {
@@ -40,7 +41,6 @@ impl<K, V> LeafNode<K, V> where K: Copy, V: Clone {
 enum Node<K, V>
 {
     Branch {
-        // each pair is a key and the node of stuff greater than or equal to that key; i.e. the first key is the minimum key of the vector
         pivots: Vec<Pivot<K, V>>,
     },
     Leaf(LeafNode<K, V>)
@@ -71,7 +71,7 @@ impl<K, V> Node<K, V> where K: Copy + Ord, V: Clone {
                         pivot.child.insert(key, value)
                     },
                     // o/w, insert a new leaf at the end
-                    None => pivots.push(Pivot {min_key: key, child: Node::Leaf(LeafNode::empty())})
+                    None => pivots.push(Pivot {min_key: key, child: Box::new(Node::Leaf(LeafNode::empty()))})
                 };
                 None
             }
@@ -90,8 +90,8 @@ impl<K, V> Node<K, V> where K: Copy + Ord, V: Clone {
                             // must split the node: create the new node here
                             let new_branch = {
                                 let (left, right) = leaf.valid_elements_mut().split_at(max_values_per_leaf / 2);
-                                let left_leaf = Node::Leaf(LeafNode::from(left));
-                                let right_leaf = Node::Leaf(LeafNode::from(right));
+                                let left_leaf = Box::new(Node::Leaf(LeafNode::from(left)));
+                                let right_leaf = Box::new(Node::Leaf(LeafNode::from(right)));
                                 Node::Branch {
                                     pivots: vec![
                                         Pivot { min_key: left_leaf.min_key(), child: left_leaf },
