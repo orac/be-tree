@@ -1,4 +1,5 @@
-use std::fmt;
+use std::ptr;
+use std::mem;
 
 const max_values_per_leaf: usize = 4;
 
@@ -8,21 +9,31 @@ struct Pivot<K, V> {
 }
 
 struct LeafNode<K, V> {
-    elements: Vec<(K, V)>,
+    elements: [(K, V); max_values_per_leaf],
     // must be <= max_values_per_leaf
     len: usize,
 }
 
 impl<K, V> LeafNode<K, V> where K: Copy, V: Clone {
     fn empty() -> Self {
-        Self { elements: vec![], len: 0 }
+        unsafe {
+            Self { elements: mem::uninitialized(), len: 0 }
+        }
     }
 
     fn from(items: &[(K, V)]) -> Self {
-        Self {
-            elements: Vec::from(items),
-            len: items.len()
-        }
+        debug_assert!(items.len() <= max_values_per_leaf);
+        let mut result = Self::empty();
+        result.elements.clone_from_slice(items);
+        result
+    }
+
+    fn valid_elements_mut(&mut self) -> &mut [(K, V)] {
+        &mut self.elements[0..self.len]
+    }
+
+    fn valid_elements(&self) -> &[(K, V)] {
+        &self.elements[0..self.len]
     }
 }
 
@@ -42,6 +53,7 @@ impl<K, V> Node<K, V> where K: Copy + Ord, V: Clone {
                 p[0].min_key
             },
             Node::Leaf(ref leaf) => {
+                debug_assert_ne!(leaf.len, 0);
                 leaf.elements[0].0
             }
         }
@@ -64,18 +76,20 @@ impl<K, V> Node<K, V> where K: Copy + Ord, V: Clone {
                 None
             }
             Node::Leaf(ref mut leaf) => {
-                let index = leaf.elements.binary_search_by_key(&key, |&(k, _)| k);
+                let index = leaf.valid_elements_mut().binary_search_by_key(&key, |&(k, _)| k);
                 match index {
                     Err(i) => { // key is absent, true insert
                         if leaf.len < max_values_per_leaf {
                             // there's space left, just insert
-                            leaf.elements.insert(i, (key, value));
+                            unsafe {
+                                slice_insert(leaf.valid_elements_mut(), i, (key, value))
+                            }
                             leaf.len += 1;
                             None
                         } else {
                             // must split the node: create the new node here
                             let new_branch = {
-                                let (left, right) = leaf.elements.split_at(max_values_per_leaf / 2);
+                                let (left, right) = leaf.valid_elements_mut().split_at(max_values_per_leaf / 2);
                                 let left_leaf = Node::Leaf(LeafNode::from(left));
                                 let right_leaf = Node::Leaf(LeafNode::from(right));
                                 Node::Branch {
@@ -116,10 +130,15 @@ impl<K, V> Node<K, V> where K: Copy + Ord, V: Clone {
                 }
             }
             Node::Leaf(ref mut leaf) if leaf.len > 0 => {
-                let index = leaf.elements.binary_search_by_key(&key, |&(k, _)| k);
+                let index = leaf.valid_elements_mut().binary_search_by_key(&key, |&(k, _)| k);
                 match index {
                     Err(_) => (),
-                    Ok(i) => { leaf.elements.remove(i); }
+                    Ok(i) => {
+                        unsafe {
+                            slice_remove(leaf.valid_elements_mut(), i);
+                            leaf.len -= 1;
+                        }
+                    }
                 }
             }
             _ => ()
@@ -140,7 +159,7 @@ impl<K, V> Node<K, V> where K: Copy + Ord, V: Clone {
                 }
             }
             Node::Leaf(ref leaf) if leaf.len > 0 => {
-                let index = leaf.elements.binary_search_by_key(&key, |&(k, _)| k);
+                let index = leaf.valid_elements().binary_search_by_key(&key, |&(k, _)| k);
                 match index {
                     Err(_) => None,
                     Ok(i) => Some(&leaf.elements[i].1)
@@ -149,6 +168,25 @@ impl<K, V> Node<K, V> where K: Copy + Ord, V: Clone {
             _ => None
         }
     }
+}
+
+unsafe fn slice_insert<T>(slice: &mut [T], idx: usize, val: T) {
+    ptr::copy(
+        slice.as_ptr().offset(idx as isize),
+        slice.as_mut_ptr().offset(idx as isize + 1),
+        slice.len() - idx
+    );
+    ptr::write(slice.get_unchecked_mut(idx), val);
+}
+
+unsafe fn slice_remove<T>(slice: &mut [T], idx: usize) -> T {
+    let ret = ptr::read(slice.get_unchecked(idx));
+    ptr::copy(
+        slice.as_ptr().offset(idx as isize + 1),
+        slice.as_mut_ptr().offset(idx as isize),
+        slice.len() - idx - 1
+    );
+    ret
 }
 
 /// A map based on a B𝛆-tree
@@ -164,7 +202,6 @@ impl<K, V> BeTree<K, V> where K: Copy + Ord, V: Clone {
     pub fn clear(&mut self) {
         match self.root {
             Node::Leaf(ref mut leaf) => {
-                leaf.elements.clear();
                 leaf.len = 0
             },
             _ => { self.root = Node::Leaf(LeafNode::empty()) }
